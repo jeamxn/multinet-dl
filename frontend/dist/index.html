@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MultiNet Downloader</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="titlebar" style="--wails-draggable:drag">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M4 9h10l4 7-4 7H4" class="m1"/><path d="M4 16h24" class="m2"/><path d="M28 9H18l-4 7 4 7h10" class="m3"/>
+    </svg>
+    <div>
+      <div class="name">MultiNet</div>
+      <div class="tag">네트워크 여러 개로 한 파일을 나눠 받기</div>
+    </div>
+  </div>
+  <div class="total" id="total" aria-live="polite"></div>
+</header>
+
+<div class="layout">
+  <aside class="side">
+    <section class="block">
+      <div class="block-head">
+        <h2>네트워크</h2>
+        <div class="head-actions">
+          <button class="ghost sm" id="testBtn" title="고른 네트워크가 인터넷에 나가는지 확인">연결 확인</button>
+          <button class="icon" id="refreshBtn" title="다시 찾기" aria-label="네트워크 다시 찾기">
+            <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="nets" class="nets"></div>
+      <label class="check small"><input type="checkbox" id="showVirtual" /> <span>VPN·가상 어댑터도 보기</span></label>
+      <p class="hint warn-note" id="bindNote"></p>
+    </section>
+
+    <section class="block">
+      <div class="block-head"><h2>네트워크당 연결</h2><output id="connsOut" class="num">8</output></div>
+      <input type="range" id="conns" min="1" max="64" step="1" value="8" aria-label="네트워크당 연결 수" />
+      <p class="hint">네트워크마다 이만큼 동시에 받음 (aria2c <code>-x</code>). 서버가 연결당 속도를 막아두면 늘릴수록 빨라짐.</p>
+      <p class="hint warn-note" id="connsWarn"></p>
+    </section>
+
+    <section class="block">
+      <div class="block-head"><h2>저장 위치</h2></div>
+      <div class="dir">
+        <span id="dirPath" class="path" title=""></span>
+      </div>
+      <div class="row gap">
+        <button class="ghost sm" id="dirBtn">변경</button>
+        <button class="ghost sm" id="dirOpen">열기</button>
+      </div>
+    </section>
+
+    <footer class="cli" id="cliInfo"></footer>
+  </aside>
+
+  <main class="main">
+    <form class="composer" id="composer" autocomplete="off">
+      <textarea id="urls" rows="2" spellcheck="false" placeholder="다운로드 주소 붙여넣기 — 여러 줄이면 여러 개"></textarea>
+      <div class="composer-row">
+        <input id="fileName" type="text" placeholder="파일 이름 (비우면 서버가 주는 이름)" spellcheck="false" />
+        <button type="button" class="ghost sm" id="hdrToggle" aria-expanded="false">헤더</button>
+        <button type="submit" class="primary" id="goBtn">다운로드 <kbd id="kbd">⌘↵</kbd></button>
+      </div>
+      <textarea id="headers" class="headers" rows="2" hidden spellcheck="false" placeholder="요청 헤더 (한 줄에 하나)  예: Cookie: session=..."></textarea>
+      <div class="form-msg" id="formMsg" role="status"></div>
+    </form>
+
+    <div class="list-head">
+      <h2>다운로드 <span id="count" class="muted"></span></h2>
+      <button class="ghost sm" id="clearBtn">끝난 항목 지우기</button>
+    </div>
+    <div id="list" class="list"></div>
+    <div id="empty" class="empty">
+      <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
+      <p>주소를 넣으면 왼쪽에서 고른 네트워크들이 파일을 나눠서 동시에 받아요.<br/>빠른 네트워크가 알아서 더 많이 가져감.</p>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

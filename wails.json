@@ -1,0 +1,17 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "MultiNet Downloader",
+  "outputfilename": "MultiNet Downloader",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dir": "frontend",
+  "wailsjsdir": "./frontend",
+  "author": { "name": "jeamxn", "email": "admin@chicken-moo.com" },
+  "info": {
+    "companyName": "jeamxn",
+    "productName": "MultiNet Downloader",
+    "productVersion": "0.1.0",
+    "copyright": "GPL-3.0-or-later",
+    "comments": "Download one file over several networks at once"
+  }
+}

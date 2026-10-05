@@ -1,0 +1,83 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  WAILS_VERSION: v2.16.0
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go vet ./cmd/... ./internal/...
+      - run: go test -race ./internal/...
+
+  macos:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
+      - run: scripts/build.sh mac
+        env: { VERSION: "${{ github.ref_type == 'tag' && github.ref_name || github.sha }}" }
+      - uses: actions/upload-artifact@v4
+        with: { name: macos, path: dist/* }
+
+  windows:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
+      - run: scripts/build.sh windows
+        env: { VERSION: "${{ github.ref_type == 'tag' && github.ref_name || github.sha }}" }
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: dist/* }
+
+  linux:
+    needs: test
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
+      - run: scripts/build.sh linux
+        env:
+          VERSION: "${{ github.ref_type == 'tag' && github.ref_name || github.sha }}"
+          WAILS_TAGS: webkit2_41
+      - uses: actions/upload-artifact@v4
+        with: { name: "linux-${{ matrix.runner }}", path: dist/* }
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - run: ls -la out
+      - run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+        env: { GH_TOKEN: "${{ github.token }}" }
