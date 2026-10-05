@@ -262,7 +262,7 @@ func TestLiveCursors(t *testing.T) {
 	data := randData(16 << 20)
 	s := server(t, data, true)
 	j := New("g", Options{URL: s.URL + "/c.bin", Dir: t.TempDir(), ConnsPerNetwork: 3,
-		Networks: []Network{fakeNet("a", 2<<20, nil), fakeNet("b", 2<<20, nil)}})
+		Networks: []Network{fakeNet("a", 512<<10, nil), fakeNet("b", 512<<10, nil)}})
 	j.Start()
 	time.Sleep(1500 * time.Millisecond)
 	mid := j.Snapshot()
