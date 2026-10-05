@@ -55,7 +55,10 @@ type NetProgress struct {
 	Label     string  `json:"label"`
 	Bytes     int64   `json:"bytes"`
 	Speed     float64 `json:"speed"`
+	Peak      float64 `json:"peak"`
 	Active    int     `json:"active"`
+	Conns     int     `json:"conns"`
+	Retries   int     `json:"retries"`
 	Failed    bool    `json:"failed"`
 	LastError string  `json:"lastError,omitempty"`
 }
@@ -74,6 +77,19 @@ type cliEvent struct {
 	Throttled  int           `json:"throttled"`
 	Networks   []NetProgress `json:"networks"`
 	FinishedAt int64         `json:"finishedAt"`
+	Map        [][2]int      `json:"map"`
+	Cursors    []Cursor      `json:"cursors"`
+	Pieces     int           `json:"pieces"`
+	StartedAt  int64         `json:"startedAt"`
+	Peak       float64       `json:"peak"`
+	FinalURL   string        `json:"finalUrl"`
+}
+
+type Cursor struct {
+	Net   int   `json:"net"`
+	Start int64 `json:"start"`
+	Pos   int64 `json:"pos"`
+	End   int64 `json:"end"`
 }
 
 // Item is one download row in the UI.
@@ -93,6 +109,12 @@ type Item struct {
 	RangeOK    bool          `json:"rangeOK"`
 	Throttled  int           `json:"throttled"`
 	NetStats   []NetProgress `json:"netStats"`
+	Map        [][2]int      `json:"map"`
+	Cursors    []Cursor      `json:"cursors"`
+	Pieces     int           `json:"pieces"`
+	StartedAt  int64         `json:"startedAt"`
+	Peak       float64       `json:"peak"`
+	FinalURL   string        `json:"finalUrl"`
 	Error      string        `json:"error"`
 	Warnings   []string      `json:"warnings"`
 	CreatedAt  int64         `json:"createdAt"`
@@ -374,7 +396,7 @@ func (a *App) startLocked(it *Item) {
 				it.State, it.Error = "error", strings.TrimPrefix(msg, "오류: ")
 			}
 		}
-		it.Speed = 0
+		it.Speed, it.Cursors = 0, nil
 		for i := range it.NetStats {
 			it.NetStats[i].Speed, it.NetStats[i].Active = 0, 0
 		}
@@ -403,6 +425,16 @@ func (a *App) apply(it *Item, ev cliEvent) {
 	it.Size, it.Done, it.Speed, it.RangeOK, it.Throttled = ev.Size, ev.Done, ev.Speed, ev.RangeOK, ev.Throttled
 	if ev.Networks != nil {
 		it.NetStats = ev.Networks
+	}
+	if ev.Map != nil {
+		it.Map = ev.Map
+	}
+	it.Cursors, it.Pieces, it.Peak = ev.Cursors, ev.Pieces, ev.Peak
+	if ev.StartedAt > 0 {
+		it.StartedAt = ev.StartedAt
+	}
+	if ev.FinalURL != "" {
+		it.FinalURL = ev.FinalURL
 	}
 	if it.State != "pausing" || ev.Type != "progress" {
 		it.State = ev.State
@@ -488,7 +520,7 @@ func (a *App) Cancel(id string) {
 	a.mu.Lock()
 	name, dir, st := it.FileName, it.Dir, it.State
 	if st != "done" {
-		it.State, it.Done, it.Speed, it.NetStats = "canceled", 0, 0, nil
+		it.State, it.Done, it.Speed, it.NetStats, it.Map, it.Cursors = "canceled", 0, 0, nil, nil, nil
 	}
 	a.dirty = true
 	a.mu.Unlock()
@@ -563,6 +595,8 @@ func (it *Item) copy() Item {
 	c := *it
 	c.proc, c.stdin, c.exit = nil, nil, nil
 	c.NetStats = append([]NetProgress(nil), it.NetStats...)
+	c.Map = append([][2]int(nil), it.Map...)
+	c.Cursors = append([]Cursor(nil), it.Cursors...)
 	return c
 }
 

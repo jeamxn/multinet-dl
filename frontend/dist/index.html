@@ -7,79 +7,73 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<header class="titlebar" style="--wails-draggable:drag">
-  <div class="brand">
-    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M4 9h10l4 7-4 7H4" class="m1"/><path d="M4 16h24" class="m2"/><path d="M28 9H18l-4 7 4 7h10" class="m3"/>
-    </svg>
-    <div>
-      <div class="name">MultiNet</div>
-      <div class="tag">네트워크 여러 개로 한 파일을 나눠 받기</div>
-    </div>
-  </div>
-  <div class="total" id="total" aria-live="polite"></div>
-</header>
+<div class="app">
+  <aside class="sidebar">
+    <div class="drag" style="--wails-draggable:drag"></div>
 
-<div class="layout">
-  <aside class="side">
-    <section class="block">
-      <div class="block-head">
+    <div class="group">
+      <div class="group-head">
         <h2>네트워크</h2>
-        <div class="head-actions">
-          <button class="ghost sm" id="testBtn" title="고른 네트워크가 인터넷에 나가는지 확인">연결 확인</button>
-          <button class="icon" id="refreshBtn" title="다시 찾기" aria-label="네트워크 다시 찾기">
-            <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>
-          </button>
-        </div>
+        <button class="text-btn" id="testBtn" title="고른 네트워크가 실제로 인터넷에 나가는지 확인">연결 확인</button>
+        <button class="icon-btn" id="refreshBtn" title="네트워크 다시 찾기" aria-label="네트워크 다시 찾기">
+          <svg viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"/></svg>
+        </button>
       </div>
-      <div id="nets" class="nets"></div>
-      <label class="check small"><input type="checkbox" id="showVirtual" /> <span>VPN·가상 어댑터도 보기</span></label>
-      <p class="hint warn-note" id="bindNote"></p>
-    </section>
+      <ul class="nets" id="nets" role="list"></ul>
+      <button class="reveal-virtual" id="virtualBtn"></button>
+      <p class="note" id="bindNote"></p>
+    </div>
 
-    <section class="block">
-      <div class="block-head"><h2>네트워크당 연결</h2><output id="connsOut" class="num">8</output></div>
-      <input type="range" id="conns" min="1" max="64" step="1" value="8" aria-label="네트워크당 연결 수" />
-      <p class="hint">네트워크마다 이만큼 동시에 받음 (aria2c <code>-x</code>). 서버가 연결당 속도를 막아두면 늘릴수록 빨라짐.</p>
-      <p class="hint warn-note" id="connsWarn"></p>
-    </section>
-
-    <section class="block">
-      <div class="block-head"><h2>저장 위치</h2></div>
-      <div class="dir">
-        <span id="dirPath" class="path" title=""></span>
+    <div class="group">
+      <div class="group-head"><h2 id="connsLabel">네트워크당 연결</h2></div>
+      <div class="conns">
+        <input type="range" id="conns" min="1" max="64" step="1" value="8" aria-labelledby="connsLabel" />
+        <output id="connsOut" for="conns">8</output>
       </div>
-      <div class="row gap">
-        <button class="ghost sm" id="dirBtn">변경</button>
-        <button class="ghost sm" id="dirOpen">열기</button>
-      </div>
-    </section>
+      <p class="note quiet" id="connsHint"></p>
+    </div>
 
-    <footer class="cli" id="cliInfo"></footer>
+    <div class="group">
+      <div class="group-head"><h2>저장 위치</h2></div>
+      <button class="folder" id="dirBtn" title="폴더 바꾸기">
+        <svg viewBox="0 0 16 16"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.2l1.3 1.5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></svg>
+        <span class="folder-name" id="dirName"></span>
+        <span class="folder-path" id="dirPath"></span>
+      </button>
+      <button class="text-btn left" id="dirOpen">Finder에서 열기</button>
+    </div>
+
+    <div class="cli-line" id="cliInfo"></div>
   </aside>
 
-  <main class="main">
-    <form class="composer" id="composer" autocomplete="off">
-      <textarea id="urls" rows="2" spellcheck="false" placeholder="다운로드 주소 붙여넣기 — 여러 줄이면 여러 개"></textarea>
-      <div class="composer-row">
-        <input id="fileName" type="text" placeholder="파일 이름 (비우면 서버가 주는 이름)" spellcheck="false" />
-        <button type="button" class="ghost sm" id="hdrToggle" aria-expanded="false">헤더</button>
-        <button type="submit" class="primary" id="goBtn">다운로드 <kbd id="kbd">⌘↵</kbd></button>
-      </div>
-      <textarea id="headers" class="headers" rows="2" hidden spellcheck="false" placeholder="요청 헤더 (한 줄에 하나)  예: Cookie: session=..."></textarea>
-      <div class="form-msg" id="formMsg" role="status"></div>
-    </form>
+  <section class="content">
+    <header class="toolbar" style="--wails-draggable:drag">
+      <form class="address" id="composer" autocomplete="off" style="--wails-draggable:no-drag">
+        <svg class="address-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>
+        <textarea id="urls" rows="1" spellcheck="false" aria-label="다운로드 주소" placeholder="다운로드 주소를 붙여넣으세요"></textarea>
+        <button type="button" class="chip-btn" id="optToggle" aria-expanded="false" aria-controls="options">옵션</button>
+        <button type="submit" class="go" id="goBtn">받기</button>
+      </form>
+    </header>
+    <div class="options" id="options" hidden>
+      <label><span>파일 이름</span><input id="fileName" type="text" spellcheck="false" placeholder="비워두면 서버가 알려주는 이름" /></label>
+      <label><span>요청 헤더</span><textarea id="headers" rows="2" spellcheck="false" placeholder="한 줄에 하나씩, 예: Cookie: session=abc"></textarea></label>
+    </div>
+    <div class="form-msg" id="formMsg" role="status"></div>
 
-    <div class="list-head">
-      <h2>다운로드 <span id="count" class="muted"></span></h2>
-      <button class="ghost sm" id="clearBtn">끝난 항목 지우기</button>
+    <div class="downloads">
+      <div class="list-head" role="row">
+        <span>파일</span><span class="r">크기</span><span class="r">속도</span><span class="r">남은 시간</span><span></span>
+      </div>
+      <div class="list" id="list" role="listbox" tabindex="0" aria-label="다운로드 목록"></div>
+      <div class="list-foot">
+        <span id="summary"></span>
+        <button class="text-btn" id="clearBtn">끝난 항목 정리</button>
+      </div>
     </div>
-    <div id="list" class="list"></div>
-    <div id="empty" class="empty">
-      <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
-      <p>주소를 넣으면 왼쪽에서 고른 네트워크들이 파일을 나눠서 동시에 받아요.<br/>빠른 네트워크가 알아서 더 많이 가져감.</p>
-    </div>
-  </main>
+
+    <section class="inspector" id="inspector" aria-live="off"></section>
+  </section>
 </div>
 <script src="app.js"></script>
 </body>

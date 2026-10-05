@@ -111,6 +111,19 @@ func TestMultiNetworkSplit(t *testing.T) {
 	if fast+slow != int64(len(data)) || slow == 0 || fast <= slow {
 		t.Fatalf("bad split fast=%d slow=%d", fast, slow)
 	}
+	if len(snap.Map) != MapCells {
+		t.Fatalf("map cells %d", len(snap.Map))
+	}
+	owners := map[int]int{}
+	for _, c := range snap.Map {
+		if c[1] != 100 {
+			t.Fatalf("cell not full after done: %v", c)
+		}
+		owners[c[0]]++
+	}
+	if owners[0] == 0 || owners[1] == 0 || owners[0] <= owners[1] {
+		t.Fatalf("map owners %v", owners)
+	}
 	if _, err := os.Stat(filepath.Join(dir, "blob.bin.mndl.json")); err == nil {
 		t.Fatal("control file left behind")
 	}
@@ -170,6 +183,15 @@ func TestPauseResumeAcrossProcess(t *testing.T) {
 	t.Logf("paused at %d, total net bytes after resume %d", first.Done, snap.Networks[0].Bytes)
 	if snap.Networks[0].Bytes != int64(len(data)) {
 		t.Fatalf("resume re-downloaded data: %d", snap.Networks[0].Bytes)
+	}
+	prev := 0
+	for _, c := range snap.Map {
+		if c[0] == -2 {
+			prev++
+		}
+	}
+	if prev == 0 {
+		t.Fatal("map should show the part from the earlier run")
 	}
 }
 
@@ -233,5 +255,29 @@ func TestServerLimitsConnections(t *testing.T) {
 	t.Logf("throttled=%d a=%d b=%d", snap.Throttled, snap.Networks[0].Bytes, snap.Networks[1].Bytes)
 	if snap.Throttled == 0 {
 		t.Fatal("expected throttled connections")
+	}
+}
+
+func TestLiveCursors(t *testing.T) {
+	data := randData(16 << 20)
+	s := server(t, data, true)
+	j := New("g", Options{URL: s.URL + "/c.bin", Dir: t.TempDir(), ConnsPerNetwork: 3,
+		Networks: []Network{fakeNet("a", 2<<20, nil), fakeNet("b", 2<<20, nil)}})
+	j.Start()
+	time.Sleep(1500 * time.Millisecond)
+	mid := j.Snapshot()
+	if len(mid.Cursors) != 6 {
+		t.Fatalf("want 6 live connections, got %d", len(mid.Cursors))
+	}
+	for _, c := range mid.Cursors {
+		if c.Pos < c.Start || c.Pos > c.End {
+			t.Fatalf("bad cursor %+v", c)
+		}
+	}
+	if mid.StartedAt == 0 || mid.Networks[0].Conns != 3 {
+		t.Fatalf("%+v", mid)
+	}
+	if snap := waitDone(t, j, 60*time.Second); snap.State != StateDone || snap.Peak <= 0 {
+		t.Fatalf("%s peak=%f", snap.State, snap.Peak)
 	}
 }

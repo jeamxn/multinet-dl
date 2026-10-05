@@ -55,32 +55,56 @@ type NetSnapshot struct {
 	Label     string  `json:"label"`
 	Bytes     int64   `json:"bytes"`
 	Speed     float64 `json:"speed"`
+	Peak      float64 `json:"peak"`
 	Active    int     `json:"active"`
+	Conns     int     `json:"conns"`   // connections allowed on this network
+	Retries   int     `json:"retries"` // dropped/failed requests that were retried
 	Failed    bool    `json:"failed"`
 	LastError string  `json:"lastError,omitempty"`
 }
 
+// Cursor is one live connection: which network, and the byte range it is filling.
+type Cursor struct {
+	Net   int   `json:"net"`
+	Start int64 `json:"start"`
+	Pos   int64 `json:"pos"`
+	End   int64 `json:"end"`
+}
+
+// MapCells is how many cells the piece map has.
+const MapCells = 240
+
 type Snapshot struct {
-	ID         string        `json:"id"`
-	URL        string        `json:"url"`
-	FileName   string        `json:"fileName"`
-	Dir        string        `json:"dir"`
-	Path       string        `json:"path"`
-	Size       int64         `json:"size"`
-	Done       int64         `json:"done"`
-	Speed      float64       `json:"speed"`
-	State      State         `json:"state"`
-	Error      string        `json:"error,omitempty"`
-	RangeOK    bool          `json:"rangeOK"`
-	Throttled  int           `json:"throttled,omitempty"` // connections dropped because the server limited them
-	Networks   []NetSnapshot `json:"networks"`
-	CreatedAt  int64         `json:"createdAt"`
-	FinishedAt int64         `json:"finishedAt,omitempty"`
+	ID        string        `json:"id"`
+	URL       string        `json:"url"`
+	FileName  string        `json:"fileName"`
+	Dir       string        `json:"dir"`
+	Path      string        `json:"path"`
+	Size      int64         `json:"size"`
+	Done      int64         `json:"done"`
+	Speed     float64       `json:"speed"`
+	State     State         `json:"state"`
+	Error     string        `json:"error,omitempty"`
+	RangeOK   bool          `json:"rangeOK"`
+	Throttled int           `json:"throttled,omitempty"` // connections dropped because the server limited them
+	Networks  []NetSnapshot `json:"networks"`
+	// Map is the file split into MapCells cells. Each cell is [owner, fill%]:
+	// owner = network index that wrote most of it, -2 = from an earlier run, -1 = nothing yet.
+	Map        [][2]int `json:"map,omitempty"`
+	Cursors    []Cursor `json:"cursors,omitempty"`
+	Pieces     int      `json:"pieces"`    // unfinished pieces
+	StartedAt  int64    `json:"startedAt"` // this run
+	Peak       float64  `json:"peak"`
+	FinalURL   string   `json:"finalUrl,omitempty"`
+	CreatedAt  int64    `json:"createdAt"`
+	FinishedAt int64    `json:"finishedAt,omitempty"`
 }
 
 type segment struct {
 	pos, end int64 // still needed: [pos, end)
 	owner    int   // worker id, -1 = free
+	net      int   // network index of the owner
+	start    int64 // where the current owner started
 }
 
 type netStat struct {
@@ -92,6 +116,9 @@ type netStat struct {
 	alive     atomic.Int32
 	speed     float64
 	lastBytes int64
+	peak      float64
+	retries   atomic.Int32
+	ranges    [][2]int64 // bytes this network wrote in this run (guarded by Job.mu)
 }
 
 // Job is one file download. Safe for concurrent use.
@@ -113,6 +140,8 @@ type Job struct {
 	nets       []*netStat
 	speed      float64
 	createdAt  time.Time
+	startedAt  time.Time
+	peak       float64
 	finishedAt time.Time
 	fatal      error
 
@@ -199,9 +228,11 @@ func (j *Job) Start() {
 	j.running = make(chan struct{})
 	j.errMsg = ""
 	j.fatal = nil
+	j.startedAt = time.Now()
 	for _, n := range j.nets {
 		n.failed.Store(false)
 		n.lastErr.Store("")
+		n.ranges = nil
 	}
 	go j.run(ctx, j.running)
 }
@@ -264,6 +295,10 @@ func (j *Job) Snapshot() Snapshot {
 		ID: j.ID, URL: j.opts.URL, FileName: j.fileName, Dir: j.opts.Dir, Size: j.size,
 		Done: j.done.Load(), Speed: j.speed, State: j.state, Error: j.errMsg, RangeOK: j.rangeOK,
 		CreatedAt: j.createdAt.UnixMilli(), Throttled: int(j.throttled.Load()),
+		StartedAt: j.startedAt.UnixMilli(), Peak: j.peak, FinalURL: j.finalURL,
+	}
+	if j.startedAt.IsZero() {
+		s.StartedAt = 0
 	}
 	if j.fileName != "" {
 		s.Path = j.finalPath()
@@ -272,13 +307,26 @@ func (j *Job) Snapshot() Snapshot {
 		s.FinishedAt = j.finishedAt.UnixMilli()
 	}
 	for _, n := range j.nets {
-		ns := NetSnapshot{ID: n.id, Label: n.label, Bytes: n.bytes.Load(), Speed: n.speed, Active: int(n.active.Load()), Failed: n.failed.Load()}
+		ns := NetSnapshot{ID: n.id, Label: n.label, Bytes: n.bytes.Load(), Speed: n.speed, Peak: n.peak, Active: int(n.active.Load()),
+			Conns: j.opts.ConnsPerNetwork, Retries: int(n.retries.Load()), Failed: n.failed.Load()}
 		if e, _ := n.lastErr.Load().(string); e != "" {
 			ns.LastError = e
 		}
 		s.Networks = append(s.Networks, ns)
 	}
+	if j.rangeOK && j.size > 0 && j.prepared {
+		s.Map = j.pieceMapLocked()
+		for _, sg := range j.segs {
+			if sg.pos < sg.end {
+				s.Pieces++
+			}
+			if sg.owner >= 0 && sg.pos < sg.end {
+				s.Cursors = append(s.Cursors, Cursor{Net: sg.net, Start: sg.start, Pos: sg.pos, End: sg.end})
+			}
+		}
+	}
 	if j.state != StateDownloading {
+		s.Cursors = nil
 		s.Speed = 0
 		for i := range s.Networks {
 			s.Networks[i].Speed = 0
@@ -483,9 +531,15 @@ func (j *Job) sampler() func() {
 					if n.speed < 1 {
 						n.speed = 0
 					}
+					if n.speed > n.peak {
+						n.peak = n.speed
+					}
 					total += n.speed
 				}
 				j.speed = total
+				if total > j.peak {
+					j.peak = total
+				}
 				j.mu.Unlock()
 			}
 		}
@@ -597,7 +651,7 @@ func (j *Job) complete() bool {
 }
 
 // next hands a worker a free piece, or splits the biggest running one.
-func (j *Job) next(wid int) *segment {
+func (j *Job) next(wid, ni int) *segment {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	// drop finished pieces
@@ -610,7 +664,7 @@ func (j *Job) next(wid int) *segment {
 	j.segs = keep
 	for _, s := range j.segs {
 		if s.owner < 0 && s.pos < s.end {
-			s.owner = wid
+			s.owner, s.net, s.start = wid, ni, s.pos
 			return s
 		}
 	}
@@ -625,7 +679,7 @@ func (j *Job) next(wid int) *segment {
 		return nil
 	}
 	mid := best.pos + (best.end-best.pos)/2
-	ns := &segment{pos: mid, end: best.end, owner: wid}
+	ns := &segment{pos: mid, end: best.end, owner: wid, net: ni, start: mid}
 	best.end = mid
 	j.segs = append(j.segs, ns)
 	return ns
@@ -652,7 +706,7 @@ func (j *Job) worker(ctx context.Context, cancelRound context.CancelFunc, f *os.
 	fails := 0
 	buf := make([]byte, 128<<10)
 	for ctx.Err() == nil {
-		s := j.next(wid)
+		s := j.next(wid, ni)
 		if s == nil {
 			return
 		}
@@ -685,6 +739,7 @@ func (j *Job) worker(ctx context.Context, cancelRound context.CancelFunc, f *os.
 			return
 		}
 		ns.lastErr.Store(err.Error())
+		ns.retries.Add(1)
 		if got > 0 {
 			fails = 0 // made progress, just a dropped connection
 		}
@@ -771,6 +826,13 @@ func (j *Job) fetch(ctx context.Context, f *os.File, ns *netStat, s *segment, bu
 			// A thief can only cut s.end at >= pos+MinSplit (>= 256 KiB) and buf is
 			// 128 KiB, so this write never lands inside someone else's piece.
 			j.mu.Lock()
+			if w > 0 {
+				if k := len(ns.ranges) - 1; k >= 0 && ns.ranges[k][1] == pos {
+					ns.ranges[k][1] = pos + w
+				} else {
+					ns.ranges = append(ns.ranges, [2]int64{pos, pos + w})
+				}
+			}
 			s.pos += w
 			finished := s.pos >= s.end
 			j.mu.Unlock()
@@ -818,6 +880,7 @@ func (j *Job) single(ctx context.Context) error {
 			return errors.Unwrap(err)
 		}
 		ns.lastErr.Store(err.Error())
+		ns.retries.Add(1)
 		lastErr = err
 		select {
 		case <-ctx.Done():
@@ -922,4 +985,73 @@ func (j *Job) finalize() error {
 		j.size = j.done.Load()
 	}
 	return nil
+}
+
+// pieceMapLocked builds the coarse map shown in the UI. Caller holds j.mu.
+func (j *Job) pieceMapLocked() [][2]int {
+	cells := MapCells
+	size := j.size
+	if int64(cells) > size {
+		cells = int(size)
+	}
+	if cells <= 0 {
+		return nil
+	}
+	cellOf := func(i int) (int64, int64) { return size * int64(i) / int64(cells), size * int64(i+1) / int64(cells) }
+	per := make([][]int64, len(j.nets))
+	add := func(dst []int64, a, b int64) {
+		if b <= a {
+			return
+		}
+		first := int(a * int64(cells) / size)
+		for c := first; c < cells; c++ {
+			lo, hi := cellOf(c)
+			if lo >= b {
+				break
+			}
+			x, y := max(a, lo), min(b, hi)
+			if y > x {
+				dst[c] += y - x
+			}
+		}
+	}
+	for i, n := range j.nets {
+		per[i] = make([]int64, cells)
+		for _, r := range n.ranges {
+			add(per[i], r[0], r[1])
+		}
+	}
+	missing := make([]int64, cells)
+	for _, sg := range j.segs {
+		add(missing, sg.pos, sg.end)
+	}
+	out := make([][2]int, cells)
+	for c := 0; c < cells; c++ {
+		lo, hi := cellOf(c)
+		span := hi - lo
+		done := span - missing[c]
+		owner, best := -1, int64(0)
+		var ours int64
+		for i := range per {
+			ours += per[i][c]
+			if per[i][c] > best {
+				owner, best = i, per[i][c]
+			}
+		}
+		if prev := done - ours; prev > best {
+			owner = -2
+		}
+		fill := 0
+		if span > 0 && done > 0 {
+			fill = int(done * 100 / span)
+			if fill == 0 {
+				fill = 1
+			}
+		}
+		if fill == 0 {
+			owner = -1
+		}
+		out[c] = [2]int{owner, fill}
+	}
+	return out
 }

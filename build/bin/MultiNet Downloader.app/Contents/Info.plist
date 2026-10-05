@@ -22,7 +22,7 @@
         <key>NSHighResolutionCapable</key>
         <string>true</string>
         <key>NSHumanReadableCopyright</key>
-        <string>MIT</string>
+        <string>GPL-3.0-or-later</string>
         
         
         <key>NSAppTransportSecurity</key>
