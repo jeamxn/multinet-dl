@@ -50,6 +50,10 @@ body {
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
+  /* Korean: wrap between words, not between syllables */
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-break: strict;
 }
 button, input, textarea, output { font: inherit; color: inherit; }
 button { background: none; border: 0; padding: 0; cursor: default; }
